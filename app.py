@@ -2,14 +2,17 @@ import streamlit as st
 import torch
 import torch.nn as nn
 import numpy as np
-from torchvision.utils import make_grid
 import os
 
-if torch.backends.mps.is_available():
-    device = torch.device("mps")
-else:
-    device = torch.device("cpu")
+# --- 1. App Configuration and Model Definition ---
 
+st.set_page_config(
+    page_title="Handwritten Digit Generator",
+    page_icon="✍️",
+    layout="wide"
+)
+
+# Define the Generator class exactly as in your training script
 latent_dim = 100
 n_classes = 10
 img_shape = (1, 28, 28)
@@ -35,46 +38,69 @@ class Generator(nn.Module):
         img = img.view(img.size(0), *img_shape)
         return img
 
+# --- 2. Load the Trained Model ---
+
 @st.cache_resource
 def load_model():
-    model_path = "generator.pth"
-    if not os.path.exists(model_path):
+    """Loads the pre-trained generator model."""
+    if not os.path.exists("generator.pth"):
+        st.error("Model file 'generator.pth' not found. Please run train.py first to generate it.")
         return None
-    model = Generator().to(device)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+        
+    device = torch.device('cpu')
+    model = Generator()
+    model.load_state_dict(torch.load("generator.pth", map_location=device))
     model.eval()
     return model
 
 generator = load_model()
 
-st.set_page_config(layout="wide")
-st.title("Handwritten Digit Generation")
+# --- 3. Streamlit User Interface ---
+
+st.title("Handwritten Digit Image Generator")
+st.write("Generate synthetic MNIST-like images using your trained Conditional GAN model.")
 
 if generator is None:
-    st.error("Model file (generator.pth) not found. Please add it to your GitHub repository.")
-else:
-    st.write("Select a digit. The app will use a GAN to generate five unique images.")
-    col1, col2 = st.columns([1, 3])
+    st.stop()
 
-    with col1:
-        selected_digit = st.selectbox("Choose a digit (0-9):", list(range(10)), index=7)
-        generate_button = st.button("Generate Images", use_container_width=True)
+st.write("---")
 
-    if generate_button:
-        with st.spinner(f"Generating images for digit {selected_digit}..."):
-            num_images = 5
-            z = torch.randn(num_images, latent_dim, device=device)
-            labels = torch.LongTensor([selected_digit] * num_images).to(device)
-            with torch.no_grad():
-                generated_imgs = generator(z, labels)
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    digit_to_generate = st.selectbox(
+        label="Choose a digit to generate (0-9):",
+        options=list(range(10))
+    )
+    
+    num_samples = 5
+
+    generate_button = st.button("Generate Images", type="primary")
+
+st.write("---")
+
+
+# --- 4. Image Generation and Display Logic ---
+
+if generate_button:
+    st.subheader(f"Generated images of digit {digit_to_generate}")
+
+    with st.spinner(f"Generating {num_samples} images of '{digit_to_generate}'..."):
+        device = torch.device('cpu')
+        
+        z = torch.randn(num_samples, latent_dim, device=device)
+        labels = torch.LongTensor([digit_to_generate] * num_samples).to(device)
+        
+        with torch.no_grad():
+            generated_imgs = generator(z, labels)
             
-            generated_imgs = 0.5 * generated_imgs + 0.5
-            grid = make_grid(generated_imgs, nrow=5, normalize=True)
-            img_grid = grid.permute(1, 2, 0).cpu().numpy()
-
-            with col2:
-                st.subheader(f"Generated Images for Digit: {selected_digit}")
-                st.image(img_grid, width=500)
-    else:
-        with col2:
-            st.info("Click 'Generate Images' to see the results.")
+        generated_imgs = 0.5 * generated_imgs + 0.5 
+        
+        cols = st.columns(num_samples)
+        for i in range(num_samples):
+            with cols[i]:
+                # Squeeze the channel dimension out (from 1,28,28 to 28,28)
+                img_np = generated_imgs[i].squeeze().cpu().numpy()
+                
+                # THE FIX IS HERE: Replaced 'use_column_width' with 'use_container_width'
+                st.image(img_np, caption=f"Sample {i+1}", use_container_width=True)
